@@ -1,15 +1,16 @@
 <!DOCTYPE html>
 <html>
-  <head>
+
+<head>
     <meta charset="utf-8">
     <meta name="viewport" content="initial-scale=1, maximum-scale=1, user-scalable=no, width=device-width">
     <title></title>
 
     <style>
-      .angular-google-map-container {
-          width: 100%;
-          height: 504px;
-      }
+        .angular-google-map-container {
+            width: 100%;
+            height: 504px;
+        }
     </style>
 
     <link href="lib/ionic/css/ionic.css" rel="stylesheet">
@@ -20,169 +21,253 @@
     <!-- IF using Sass (run gulp sass first), then uncomment below and remove the CSS includes above
     <link href="css/ionic.app.css" rel="stylesheet">
     -->
-
+    <script src="js/browserMqtt.js"></script>
 
     <script>
-// Ionic Starter App
+        // Ionic Starter App
 
-// angular.module is a global place for creating, registering and retrieving Angular modules
-// 'starter' is the name of this angular module example (also set in a <body> attribute in index.html)
-// the 2nd parameter is an array of 'requires'
-// 'starter.services' is found in services.js
-// 'starter.controllers' is found in controllers.js
-angular.module('app', ['ionic'])
+        // angular.module is a global place for creating, registering and retrieving Angular modules
+        // 'starter' is the name of this angular module example (also set in a <body> attribute in index.html)
+        // the 2nd parameter is an array of 'requires'
+        // 'starter.services' is found in services.js
+        // 'starter.controllers' is found in controllers.js
+        angular.module('app', ['ionic'])
 
-.run(function($ionicPlatform) {
-  $ionicPlatform.ready(function() {
-    // Hide the accessory bar by default (remove this to show the accessory bar above the keyboard
-    // for form inputs)
-    if(window.cordova && window.cordova.plugins.Keyboard) {
-      cordova.plugins.Keyboard.hideKeyboardAccessoryBar(true);
-    }
-    if(window.StatusBar) {
-      // org.apache.cordova.statusbar required
-      StatusBar.styleDefault();
-    }
-  });
-})
+        .run(function ($ionicPlatform) {
+            $ionicPlatform.ready(function () {
+                // Hide the accessory bar by default (remove this to show the accessory bar above the keyboard
+                // for form inputs)
+                if (window.cordova && window.cordova.plugins.Keyboard) {
+                    cordova.plugins.Keyboard.hideKeyboardAccessoryBar(true);
+                }
+                if (window.StatusBar) {
+                    // org.apache.cordova.statusbar required
+                    StatusBar.styleDefault();
+                }
+            });
+        })
 
-.config(function($stateProvider, $urlRouterProvider) {
+        .service('mqttService', function () {
+            var client = mqtt.connect('http://test');
+            client.end();
+            var data             = {},
+                subscribedTopics = [],
+                iotUrl           = undefined;
+            return {
+                connect: function (ioturl) {
+                    console.log('Conectando');
+                    var result = false;
+                    if (ioturl) {
+                        try {
+                            client = undefined;
+                            client = mqtt.connect(ioturl, {
+                                clientId: 'mqtttest-' + (new Date()).getTime()
+                            }); // you add a ws:// url here
 
-  // Ionic uses AngularUI Router which uses the concept of states
-  // Learn more here: https://github.com/angular-ui/ui-router
-  // Set up the various states which the app can be in.
-  // Each state's controller can be found in controllers.js
-  $stateProvider
-    
-    .state('page1', {
-      url: '/',
-      templateUrl: 'page1.html'
-    })
-    
-    .state('page2', {
-      url: '/page2',
-      templateUrl: 'page2.html'
-    })
-    
-    .state('page3', {
-      url: '/page3',
-      templateUrl: 'page3.html'
-    })
-    
-    .state('page4', {
-      url: '/page4',
-      templateUrl: 'page4.html'
-    })
-    
-    .state('page5', {
-      url: '/sensor',
-      templateUrl: 'page5.html'
-    })
-    
-    .state('page6', {
-      url: '/config',
-      templateUrl: 'page6.html'
-    })
-    ;
+                            result = true;
+                            console.log('Client started');
 
-  // if none of the above states are matched, use this as the fallback
-  
-  $urlRouterProvider.otherwise('/');
-  
+                        } catch (err) {
+                            console.log('Error: ', err);
+                            alert('No se pudo conectar a ' + ioturl);
+                        }
+                    } else {
+                        alert('Ingrese una url')
+                    }
 
-});
+                    return result;
+                },
+                disconnect: function () {
+                    client.end();
+                    return client;
+                },
+                getData: function () {
+                    console.log(data);
+                    return data;
+                },
+                subscribe: function (topic) {
+                    client.subscribe(topic);
+
+                    client.on("message", function (topic, payload) {
+                        console.log([topic, payload].join(": "));
+
+                        data = JSON.parse(payload.toString());
+                        console.log(data);
+
+                    });
+                    
+                    subscribedTopics.push(topic);
+                },
+                unsubscribe: function(topic){
+                    client.unsubscribe(topic);
+                    subscribedTopics.splice(subscribedTopics.indexOf(topic), 1);
+                },
+                setIotUrl: function (url) {
+                    iotUrl = url;
+                },
+                getIotUrl: function () {
+                    return iotUrl;
+                }, 
+                clearSubscriptions: function(){
+                    for(idx in subscribedTopics){
+                        client.unsubscribe(subscribedTopics[idx]);
+                    }
+                    subscribedTopics = [];
+                }
+            };
+        })
+
+        .controller('sensorController', function ($scope, $timeout, mqttService) {
+
+            $scope.sensors = [];
+            var connect = function () {
+                var ioturl = mqttService.getIotUrl();
+                console.log('sensorController ioturl', ioturl);
+                mqttService.connect(ioturl);
+                mqttService.subscribe('sensorStatus');
+
+                $timeout(function(){ 
+                    $scope.sensors = mqttService.getData();
+                    console.log($scope.sensors);
+                }, 300);
+            }
+
+            $scope.updateConnection = connect;
+            connect();
 
 
+        })
+
+        .controller('configController', function ($scope, mqttService) {
+            $scope.data = {};
+            
+            $scope.saveConfig = function () {
+                mqttService.setIotUrl($scope.data.ioturl);
+            }
+
+            $scope.testConfig = function () {                
+                console.log($scope.data.ioturl);
+                if (mqttService.connect($scope.data.ioturl)) {
+                    alert('OK');
+                } else {
+                    alert('NOK');
+                }
+            }
+        })
+        
+        .controller('temperatureController', function($scope, $interval, $stateParams, $timeout, mqttService){            
+            var sensorid =$stateParams.sensorid;            
+            console.log('SensorId: ', sensorid);
+            $scope.sensorTitle = 'Sensor ' + sensorid;
+            mqttService.clearSubscriptions();
+            mqttService.subscribe('temperatureUpdate-' + sensorid);            
+            
+            var updateTemperature = function(){
+                var data = mqttService.getData();
+                console.log(data);
+                $scope.temperature = data[0].value;
+                $scope.capturedate = data[0].captureDate;
+            }
+            
+            var updateInterval = $interval(updateTemperature, 1000);
+            $scope.$on('$destroy', function(){
+                if(updateInterval){
+                    console.log('Cancelando intervalo', sensorid);
+                    $interval.cancel(updateInterval);
+                    mqttService.unsubscribe('temperatureUpdate-' + sensorid);  
+                }
+            });
+            
+            
+        })
+
+        .config(function ($stateProvider, $urlRouterProvider) {
+
+            // Ionic uses AngularUI Router which uses the concept of states
+            // Learn more here: https://github.com/angular-ui/ui-router
+            // Set up the various states which the app can be in.
+            // Each state's controller can be found in controllers.js
+            $stateProvider
+
+                .state('page1', {
+                url: '/',
+                templateUrl: 'sensorList.html',
+                controller: 'sensorController'
+            })
+            
+            .state('page5', {
+                url: '/sensor/:sensorid',
+                templateUrl: 'sensor.html',
+                controller: 'temperatureController'
+            })
+
+            .state('page6', {
+                url: '/config',
+                templateUrl: 'config.html',
+                controller: 'configController'
+            });
+
+            // if none of the above states are matched, use this as the fallback
+
+            $urlRouterProvider.otherwise('/');
+
+
+        });
     </script>
-  </head>
-  <body ng-app="app" animation="slide-left-right-ios7">
-  <div style="">
+</head>
+
+<body ng-app="app" animation="slide-left-right-ios7">
     <div style="">
-        <ion-nav-bar class="bar-stable">
-            <ion-nav-back-button class="button-icon icon ion-ios7-arrow-back">Back</ion-nav-back-button>
-        </ion-nav-bar>
-        <ion-nav-view></ion-nav-view>
+        <div style="">
+            <ion-nav-bar class="bar-stable">
+                <ion-nav-back-button class="button-icon icon ion-ios7-arrow-back">Back</ion-nav-back-button>
+            </ion-nav-bar>
+            <ion-nav-view></ion-nav-view>
+        </div>
     </div>
-</div>
-<script id="page1.html" type="text/ng-template">
-<ion-view style="" title="Sensor monitor">
-    <ion-content class="has-header" padding="true">
-        <ion-list style="">
-            <ion-item style="" href="#/page2">Sensor tierra</ion-item>
-            <ion-item style="" href="#/page3">Sensor hojas</ion-item>
-            <ion-item style="" href="#/page4">Sensor tallo</ion-item>
-            <ion-item style="" href="#/sensor">Sensor control</ion-item>
-        </ion-list>
-        <button style="" class="button button-stable button-block  icon ion-refresh">Actualizar</button>
-        <a style="" class="button button-stable button-block  icon ion-gear-a" href="#/config">Configurar</a>
-    </ion-content>
-</ion-view></script>
-<script id="page2.html" type="text/ng-template">
-<ion-view style="" title="Sensor tierra">
-    <ion-content class="has-header" padding="true">
-        <div style="line-height: 250px; background-color: rgb(255, 255, 255); border: 1px solid rgb(238, 238, 238); border-radius: 3px; text-align: center; width: 100%; height: auto;">
-            <i style="font-size: 64px; color: rgb(136, 136, 136); vertical-align: middle;" class="icon ion-image"></i>
-        </div>
-        <h1 style="">Lectura actual:</h1>
-        <div style="">
-            <p style="display: block; margin: 0.5em auto;text-align:center; font-size: 6em;">24°C</p>
-        </div>
-        <button style="" class="button button-stable button-block  icon ion-refresh">Actualizar</button>
-    </ion-content>
-</ion-view></script>
-<script id="page3.html" type="text/ng-template">
-<ion-view style="" title="Sensor hojas">
-    <ion-content class="has-header" padding="true">
-        <div style="line-height: 250px; background-color: rgb(255, 255, 255); border: 1px solid rgb(238, 238, 238); border-radius: 3px; text-align: center; width: 100%; height: auto;">
-            <i style="font-size: 64px; color: rgb(136, 136, 136); vertical-align: middle;" class="icon ion-image"></i>
-        </div>
-        <h1 style="">Lectura actual:</h1>
-        <div style="">
-            <p style="display: block; margin: 0.5em auto;text-align:center; font-size: 6em;">24°C</p>
-        </div>
-        <button style="" class="button button-stable button-block  icon ion-refresh">Actualizar</button>
-    </ion-content>
-</ion-view></script>
-<script id="page4.html" type="text/ng-template">
-<ion-view style="" title="Sensor tallo">
-    <ion-content class="has-header" padding="true">
-        <div style="line-height: 250px; background-color: rgb(255, 255, 255); border: 1px solid rgb(238, 238, 238); border-radius: 3px; text-align: center; width: 100%; height: auto;">
-            <i style="font-size: 64px; color: rgb(136, 136, 136); vertical-align: middle;" class="icon ion-image"></i>
-        </div>
-        <h1 style="">Lectura actual:</h1>
-        <div style="">
-            <p style="display: block; margin: 0.5em auto;text-align:center; font-size: 6em;">24°C</p>
-        </div>
-        <button style="" class="button button-stable button-block  icon ion-refresh">Actualizar</button>
-    </ion-content>
-</ion-view></script>
-<script id="page5.html" type="text/ng-template">
-<ion-view style="" title="Sensor control">
-    <ion-content class="has-header" padding="true">
-        <div style="line-height: 250px; background-color: rgb(255, 255, 255); border: 1px solid rgb(238, 238, 238); border-radius: 3px; text-align: center; width: 100%; height: auto;">
-            <i style="font-size: 64px; color: rgb(136, 136, 136); vertical-align: middle;" class="icon ion-image"></i>
-        </div>
-        <h1 style="">Lectura actual:</h1>
-        <div style="">
-            <p style="display: block; margin: 0.5em auto;text-align:center; font-size: 6em;">24°C</p>
-        </div>
-        <button style="" class="button button-stable button-block  icon ion-refresh">Actualizar</button>
-    </ion-content>
-</ion-view></script>
-<script id="page6.html" type="text/ng-template">
-<ion-view style="" title="Configuracion">
-    <ion-content class="has-header" padding="true">
-        <form style="">
-            <label style="" name="ioturl" class="item item-input">
-                <span class="input-label">URL</span>
-                <input placeholder="http://iot.dominio.ext" type="text">
-            </label>
-        </form>
-        <div style="" class="button-bar">
-            <button style="" class="button button-stable button-block  icon ion-help">Probar</button>
-            <button style="" class="button button-stable button-block  icon ion-checkmark">Guardar</button>
-        </div>
-    </ion-content>
-</ion-view></script>
-  </body>
+    <script id="sensorList.html" type="text/ng-template">
+        <ion-view style="" title="Sensor monitor">
+            <ion-content class="has-header" padding="true">
+                <ion-list style="" ng-repeat="sensor in sensors">
+                    <ion-item style="" ng-href="#/sensor/{{sensor.id}}">{{sensor.id}}: {{sensor.status}} - {{sensor.name}}</ion-item>                                        
+                </ion-list>
+                <button style="" class="button button-stable button-block  icon ion-refresh" ng-click="updateConnection()">Actualizar</button>
+                <a style="" class="button button-stable button-block  icon ion-gear-a" href="#/config">Configurar</a>
+            </ion-content>
+        </ion-view>
+    </script>
+    
+    <script id="sensor.html" type="text/ng-template">
+        <ion-view style="" title="{{sensorTitle}}">
+            <ion-content class="has-header" padding="true">
+                <!--<div style="line-height: 250px; background-color: rgb(255, 255, 255); border: 1px solid rgb(238, 238, 238); border-radius: 3px; text-align: center; width: 100%; height: auto;">
+                    <i style="font-size: 64px; color: rgb(136, 136, 136); vertical-align: middle;" class="icon ion-image"></i>
+                </div>-->
+                <h1 style="">Lectura actual:</h1>
+                <div style="">
+                    <p style="display: block; margin: 0.5em auto;text-align:center; font-size: 6em;">{{temperature}}°C</p>
+                    <p style="display: block; margin: 0 auto;text-align:center; font-size: 2em;">{{capturedate}}</p>
+                </div>
+                <button style="" class="button button-stable button-block  icon ion-refresh" ng-click="updateTemperature()">Actualizar</button>
+            </ion-content>
+        </ion-view>
+    </script>
+    <script id="config.html" type="text/ng-template">
+        <ion-view style="" title="Configuracion">
+            <ion-content class="has-header" padding="true">
+                <form style="">
+                    <label style="" name="ioturl" class="item item-input">
+                        <span class="input-label">URL</span>
+                        <input id="ioturl" placeholder="http://iot.dominio.ext" type="text" ng-model="data.ioturl">
+                    </label>
+                </form>
+                <div style="" class="button-bar">
+                    <button style="" class="button button-stable button-block  icon ion-help" ng-click="testConfig()">Probar</button>
+                    <button style="" class="button button-stable button-block  icon ion-checkmark"  ng-click="saveConfig()">Guardar</button>
+                </div>
+            </ion-content>
+        </ion-view>
+    </script>
+</body>
+
 </html>
