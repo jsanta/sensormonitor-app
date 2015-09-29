@@ -33,7 +33,7 @@
         // 'starter.controllers' is found in controllers.js
         angular.module('app', ['ionic'])
 
-        .run(function ($ionicPlatform) {
+        .run(function ($ionicPlatform, $ionicPopup, $state) {
             $ionicPlatform.ready(function () {
                 // Hide the accessory bar by default (remove this to show the accessory bar above the keyboard
                 // for form inputs)
@@ -44,10 +44,24 @@
                     // org.apache.cordova.statusbar required
                     StatusBar.styleDefault();
                 }
+                
+                // http://www.gajotres.net/ionic-framework-handling-android-back-button-like-a-pro/
+                $ionicPlatform.registerBackButtonAction(function(event) {
+                    if ($state.current.name=="page1") { // your check here
+                    $ionicPopup.confirm({
+                        title: 'Terminar monitoreo',
+                        template: '¿Está seguro que desea salir?'
+                    }).then(function(res) {
+                        if (res) {
+                        $ionicPlatform.exitApp();
+                        }
+                    })
+                    }
+                }, 100);
             });
         })
 
-        .service('mqttService', function () {
+        .service('mqttService', function ($q, $interval) {
             var client = mqtt.connect('http://test');
             client.end();
             var data             = {},
@@ -84,15 +98,41 @@
                 getData: function () {
                     console.log(data);
                     return data;
+                },                
+                getDataDefer: function () {
+                    var defer  = $q.defer();
+                    var startDate = (new Date()).getTime();
+                    var timeout   = 3500; // 3.5s                    
+                    
+                    var ddata = undefined;
+                    var cnt   = 0;
+                    var dataInterval = $interval(function(){
+                        var intervalDate = (new Date()).getTime();
+                        ++cnt;
+                        ddata = data;                        
+                        if(data){
+                            console.log('Datos rescatados tras: ', cnt, ' repeticiones', data);
+                            defer.resolve(data);                            
+                            $interval.cancel(dataInterval);                            
+                        } else{
+                            if(intervalDate - startDate >= timeout){                                
+                                console.error('Falla al rescatar datos tras: ', cnt, ' repeticiones', data);                                
+                                defer.reject('No se pudo rescatar datos.');
+                                $interval.cancel(dataInterval);
+                            }
+                        }
+                    }, 300);                     
+                    
+                    return defer.promise;
                 },
                 subscribe: function (topic) {
                     client.subscribe(topic);
 
                     client.on("message", function (topic, payload) {
-                        console.log([topic, payload].join(": "));
+                        //console.log([topic, payload].join(": "));
 
                         data = JSON.parse(payload.toString());
-                        console.log(data);
+                        //console.log(data);
 
                     });
                     
@@ -108,9 +148,15 @@
                 getIotUrl: function () {
                     return iotUrl;
                 }, 
+                getSubscribedTopics: function(){
+                    return subscribedTopics;
+                },
                 clearSubscriptions: function(){
+                    console.log('subscribedTopics', subscribedTopics);
                     for(idx in subscribedTopics){
-                        client.unsubscribe(subscribedTopics[idx]);
+                        client.unsubscribe(subscribedTopics[idx], function(res){
+                            console.log('Dessuscrito de ', subscribedTopics[idx], res);
+                        });
                     }
                     subscribedTopics = [];
                 }
@@ -126,14 +172,25 @@
                 mqttService.connect(ioturl);
                 mqttService.subscribe('sensorStatus');
 
-                $timeout(function(){ 
+                /*$timeout(function(){ 
                     $scope.sensors = mqttService.getData();
                     console.log($scope.sensors);
-                }, 300);
+                }, 300);*/
+                var sensorData = mqttService.getDataDefer();
+                sensorData.then(function(res){
+                    $timeout(function(){
+                        $scope.sensors = res;
+                        console.log($scope.sensors);
+                    }, 300);
+                }, function(err){
+                    console.log('No se pudo obtener data de sensores.', err);
+                })
             }
 
             $scope.updateConnection = connect;
-            connect();
+            //connect();
+            
+            $timeout(connect, 1);
 
 
         })
@@ -159,14 +216,32 @@
             var sensorid =$stateParams.sensorid;            
             console.log('SensorId: ', sensorid);
             $scope.sensorTitle = 'Sensor ' + sensorid;
-            mqttService.clearSubscriptions();
-            mqttService.subscribe('temperatureUpdate-' + sensorid);            
+            //mqttService.clearSubscriptions();
+            var topics = mqttService.getSubscribedTopics();
+            for(idx in topics){                
+                mqttService.unsubscribe(topics[idx]);
+            }
+            mqttService.subscribe('temperatureUpdate-' + sensorid);  
+            topics = mqttService.getSubscribedTopics();                      
             
             var updateTemperature = function(){
-                var data = mqttService.getData();
-                console.log(data);
-                $scope.temperature = data[0].value;
-                $scope.capturedate = data[0].captureDate;
+                var data = mqttService.getDataDefer();
+                data.then(function(res){
+                    console.log(res);                    
+                    if(res[0].sensorId == sensorid){
+                        $scope.sensorid    = res[0].sensorId;
+                        $scope.temperature = res[0].value;
+                        $scope.capturedate = res[0].captureDate;
+                    } else {
+                        console.warn('Capturando mensaje para otr Sensor: ' + res[0].sensorId);
+                        console.log('Intentando dessuscripcion');
+                        try{ mqttService.unsubscribe('temperatureUpdate-' + res[0].sensorId); } catch(err){ console.error('Error dessuscribiendo topic', err); }
+                    }
+                         
+                }, function(err){
+                    console.log('No se pudo rescatar temperatura.', err);
+                });
+                
             }
             
             var updateInterval = $interval(updateTemperature, 1000);
@@ -191,6 +266,7 @@
 
                 .state('page1', {
                 url: '/',
+                cache: false,
                 templateUrl: 'sensorList.html',
                 controller: 'sensorController'
             })
@@ -246,7 +322,7 @@
                 <h1 style="">Lectura actual:</h1>
                 <div style="">
                     <p style="display: block; margin: 0.5em auto;text-align:center; font-size: 6em;">{{temperature}}°C</p>
-                    <p style="display: block; margin: 0 auto;text-align:center; font-size: 2em;">{{capturedate}}</p>
+                    <p style="display: block; margin: 0 auto;text-align:center; font-size: 2em;">{{capturedate}} ({{sensorid}})</p>
                 </div>
                 <button style="" class="button button-stable button-block  icon ion-refresh" ng-click="updateTemperature()">Actualizar</button>
             </ion-content>
