@@ -1,4 +1,11 @@
 {
   "name": "sensormonitor-mockups",
-  "app_id": "4c305726"
+  "app_id": "4c305726",
+  "browsers": [
+    {
+      "platform": "android",
+      "browser": "crosswalk",
+      "version": "14.42.334.0"
+    }
+  ]
 }
