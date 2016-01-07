@@ -1,6 +1,7 @@
 {
   "name": "sensormonitor-mockups",
   "app_id": "4c305726",
+  "defaultBrowser": "chromium-browser",
   "browsers": [
     {
       "platform": "android",
